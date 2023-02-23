@@ -23055,8 +23055,6 @@ THREE.ShaderLib = {
 
 THREE.WebGLRenderer = function ( parameters ) {
 
-	console.log( 'THREE.WebGLRenderer', THREE.REVISION );
-
 	parameters = parameters || {};
 
 	var _canvas = parameters.canvas !== undefined ? parameters.canvas : document.createElement( 'canvas' ),
@@ -28694,7 +28692,7 @@ THREE.WebGLRenderer = function ( parameters ) {
 
 		if ( _gl.getProgramInfoLog( program ) !== '' ) {
 
-			console.error( 'gl.getProgramInfoLog()', _gl.getProgramInfoLog( program ) );
+			// console.error( 'gl.getProgramInfoLog()', _gl.getProgramInfoLog( program ) );
 
 		}
 

@@ -82,21 +82,21 @@ class LocationGlobe {
             // Connections
             this.conns = [];
             this.addConn = ip => {
-                require("https").get({host: "freegeoip.app", port: 443, path: "/json/"+ip, localAddress: window.mods.netstat.internalIPv4, agent: false}, res => {
-                    let rawData = "";
-                    res.on("data", chunk => {
-                        rawData += chunk;
+                let data = null;
+                try {
+                    data = window.mods.netstat.geoLookup.get(ip);
+                } catch {
+                    // do nothing
+                }
+                let geo = (data !== null ? data.location : {});
+                if (geo.latitude && geo.longitude) {
+                    const lat = Number(geo.latitude);
+                    const lon = Number(geo.longitude);
+                    window.mods.globe.conns.push({
+                        ip,
+                        pin: window.mods.globe.globe.addPin(lat, lon, "", 1.2),
                     });
-                    res.on("end", () => {
-                        this.parseResponse(rawData, ip).catch(e => {
-                            let electron = require("electron");
-                            electron.ipcRenderer.send("log", "note", "LocationGlobe: Error parsing data from ipinfo.now.sh");
-                            electron.ipcRenderer.send("log", "debug", `Error: ${e}`);
-                        })
-                    });
-                }).on("error", e => {
-                    // Drop it
-                });
+                }
             };
             this.removeConn = ip => {
                 let index = this.conns.findIndex(x => x.ip === ip);
@@ -133,19 +133,6 @@ class LocationGlobe {
         }, 4000);
     }
 
-    async parseResponse(rawData, ip) {
-        const json = JSON.parse(rawData);
-        if (json.latitude && json.longitude) {
-            const lat = Number(json.latitude);
-            const lon = Number(json.longitude);
-
-            window.mods.globe.conns.push({
-                ip,
-                pin: window.mods.globe.globe.addPin(lat, lon, "", 1.2),
-            });
-        }
-    }
-
     addRandomConnectedMarkers() {
         const randomLat = this.getRandomInRange(40, 90, 3);
         const randomLong = this.getRandomInRange(-180, 0, 3);
@@ -153,35 +140,21 @@ class LocationGlobe {
         this.globe.addMarker(randomLat - 20, randomLong + 150, '', true);
     }
     addTemporaryConnectedMarker(ip) {
-        require("https").get({host: "freegeoip.app", port: 443, path: "/json/"+ip, localAddress: window.mods.netstat.internalIPv4, agent: false}, res => {
-            let rawData = "";
-            res.on("data", chunk => {
-                rawData += chunk;
-            });
-            res.on("end", () => {
-                let json;
-                try {
-                    json = JSON.parse(rawData);
-                } catch(e) {
-                    return;
-                }
-                if (json.latitude && json.longitude) {
-                    const lat = Number(json.latitude);
-                    const lon = Number(json.longitude);
+        let data = window.mods.netstat.geoLookup.get(ip);
+        let geo = (data !== null ? data.location : {});
+        if (geo.latitude && geo.longitude) {
+            const lat = Number(geo.latitude);
+            const lon = Number(geo.longitude);
 
-                    window.mods.globe.conns.push({
-                        ip,
-                        pin: window.mods.globe.globe.addPin(lat, lon, "", 1.2)
-                    });
-                    let mark = window.mods.globe.globe.addMarker(lat, lon, '', true);
-                    setTimeout(() => {
-                        mark.remove();
-                    }, 3000);
-                }
+            window.mods.globe.conns.push({
+                ip,
+                pin: window.mods.globe.globe.addPin(lat, lon, "", 1.2)
             });
-        }).on("error", e => {
-            // Drop it
-        });
+            let mark = window.mods.globe.globe.addMarker(lat, lon, '', true);
+            setTimeout(() => {
+                mark.remove();
+            }, 3000);
+        }
     }
     removeMarkers() {
         this.globe.markers.forEach(marker => { marker.remove(); });

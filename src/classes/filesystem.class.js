@@ -5,6 +5,7 @@ class FilesystemDisplay {
         const fs = require("fs");
         const path = require("path");
         this.cwd = [];
+        this.cwd_path = null;
         this.iconcolor = `rgb(${window.theme.r}, ${window.theme.g}, ${window.theme.b})`;
         this._formatBytes = (a,b) => {if(0==a)return"0 Bytes";var c=1024,d=b||2,e=["Bytes","KB","MB","GB","TB","PB","EB","ZB","YB"],f=Math.floor(Math.log(a)/Math.log(c));return parseFloat((a/Math.pow(c,f)).toFixed(d))+" "+e[f]};
         this.fileIconsMatcher = require("./assets/misc/file-icons-match.js");
@@ -101,7 +102,8 @@ class FilesystemDisplay {
                 // See #501
                 if (this._noTracking) return false;
 
-                if (cwd && window.currentTerm === num) {
+                if (cwd && cwd !== this.cwd_path && window.currentTerm === num) {
+                    this.cwd_path = cwd;
                     if (this._fsWatcher) {
                         this._fsWatcher.close();
                     }
@@ -121,8 +123,10 @@ class FilesystemDisplay {
             if (this._fsWatcher) {
                 this._fsWatcher.close();
             }
-            this._fsWatcher = fs.watch(dir, () => {
-                this._runNextTick = true;
+            this._fsWatcher = fs.watch(dir, (eventType, filename) => {
+                if (eventType != "change") { // #758 - Don't refresh file view if only file contents have changed.
+                    this._runNextTick = true;
+                }
             });
         };
 
@@ -187,13 +191,14 @@ class FilesystemDisplay {
 
                     let e = {
                         name: window._escapeHtml(file),
+                        path: path.resolve(tcwd, file),
                         type: "other",
                         category: "other",
                         hidden: false
                     };
 
                     if (typeof fstat !== "undefined") {
-                        e.lastAccessed = fstat.mtime;
+                        e.lastAccessed = fstat.mtime.getTime();
 
                         if (fstat.isDirectory()) {
                             e.category = "dir";
@@ -220,6 +225,7 @@ class FilesystemDisplay {
                     if (e.category === "file" && tcwd === themesDir && file.endsWith(".json")) e.type = "edex-theme";
                     if (e.category === "file" && tcwd === keyboardsDir && file.endsWith(".json")) e.type = "edex-kblayout";
                     if (e.category === "file" && tcwd === settingsDir && file === "settings.json") e.type = "edex-settings";
+                    if (e.category === "file" && tcwd === settingsDir && file === "shortcuts.json") e.type = "edex-shortcuts";
 
                     if (file.startsWith(".")) e.hidden = true;
 
@@ -281,7 +287,10 @@ class FilesystemDisplay {
             this.render(devices, true);
         };
 
-        this.render = async (blockList, isDiskView) => {
+        this.render = async (originBlockList, isDiskView) => {
+            // Work on a clone of the blocklist to avoid altering fsDisp.cwd
+            let blockList = JSON.parse(JSON.stringify(originBlockList));
+
             if (this.failed === true) return false;
 
             if (isDiskView) {
@@ -296,35 +305,49 @@ class FilesystemDisplay {
             }
 
             let filesDOM = ``;
-            blockList.forEach(e => {
+            blockList.forEach((e, blockIndex) => {
                 let hidden = e.hidden ? " hidden" : "";
+
+                let cmdPrefix = `if (window.keyboard.container.dataset.isCtrlOn == "true") {
+                                electron.shell.openPath(fsDisp.cwd[${blockIndex}].path);
+                                electronWin.minimize();
+                            } else if (window.keyboard.container.dataset.isShiftOn == "true") {
+                                window.term[window.currentTerm].write("\\""+fsDisp.cwd[${blockIndex}].path+"\\"");
+                            } else {
+                          `.replace(/\n+ */g, ''); // Minify
+
+                let cmdSuffix = `}`;
 
                 let cmd;
 
                 if (!this._noTracking) {
                     if (e.type === "dir" || e.type.endsWith("Dir")) {
-                        cmd = `window.term[window.currentTerm].writelr('cd \\'${e.name.replace(/\\/g, "\\\\")}\\'')`;
+                        cmd = `window.term[window.currentTerm].writelr("cd \\""+fsDisp.cwd[${blockIndex}].name+"\\"")`;
                     } else if (e.type === "up") {
-                        cmd = `window.term[window.currentTerm].writelr('cd ..')`;
+                        cmd = `window.term[window.currentTerm].writelr("cd ..")`;
                     } else if (e.type === "disk" || e.type === "rom" || e.type === "usb") {
                         if (process.platform === "win32") {
-                            cmd = `window.term[window.currentTerm].writelr('${e.path.replace(/\\/g, "\\\\")}')`;
+                            cmd = `window.term[window.currentTerm].writelr("${e.path.replace(/\\/g, '')}")`;
                         } else {
-                            cmd = `window.term[window.currentTerm].writelr('cd \\'${e.path.replace(/\\/g, "\\\\")}\\'')`;
+                            cmd = `window.term[window.currentTerm].writelr("cd \\"${e.path.replace(/\\/g, '')}\\"")`;
                         }
                     } else {
-                        cmd = `window.term[window.currentTerm].write('\\'${e.name}\\'')`;
+                        cmd = `window.term[window.currentTerm].write("\\""+fsDisp.cwd[${blockIndex}].path+"\\"")`;
                     }
                 } else {
                     if (e.type === "dir" || e.type.endsWith("Dir")) {
-                        cmd = `window.fsDisp.readFS('${path.resolve(this.dirpath, e.name).replace(/\\/g, '\\\\')}')`;
+                        cmd = `window.fsDisp.readFS(fsDisp.cwd[${blockIndex}].path)`;
                     } else if (e.type === "up") {
-                        cmd = `window.fsDisp.readFS('${path.resolve(this.dirpath, '..').replace(/\\/g, '\\\\')}')`;
+                        cmd = `window.fsDisp.readFS(path.resolve(window.fsDisp.dirpath, ".."))`;
                     } else if (e.type === "disk" || e.type === "rom" || e.type === "usb") {
-                        cmd = `window.fsDisp.readFS('${e.path.replace(/\\/g, '\\\\')}')`;
+                        cmd = `window.fsDisp.readFS("${e.path.replace(/\\/g, '')}")`;
                     } else {
-                        cmd = `window.term[window.currentTerm].write('\\'${path.resolve(this.dirpath, e.name)}\\'')`;
+                        cmd = `window.term[window.currentTerm].write("\\""+fsDisp.cwd[${blockIndex}].path+"\\"")`;
                     }
+                }
+
+                if (e.type === "file") {
+                    cmd = `window.fsDisp.openFile(${blockIndex})`;
                 }
 
                 if (e.type === "system") {
@@ -333,16 +356,27 @@ class FilesystemDisplay {
 
                 if (e.type === "showDisks") {
                     cmd = `window.fsDisp.readDevices()`;
+                    cmdPrefix = '';
+                    cmdSuffix = '';
+                }
+
+                if (e.type === "up") {
+                    // cmd is OS-specific and defined above
+                    cmdPrefix = '';
+                    cmdSuffix = '';
                 }
 
                 if (e.type === "edex-theme") {
-                    cmd = `window.themeChanger('${e.name.slice(0, -5)}')`;
+                    cmd = `window.themeChanger("${e.name.slice(0, -5)}")`;
                 }
                 if (e.type === "edex-kblayout") {
-                    cmd = `window.remakeKeyboard('${e.name.slice(0, -5)}')`;
+                    cmd = `window.remakeKeyboard("${e.name.slice(0, -5)}")`;
                 }
                 if (e.type === "edex-settings") {
                     cmd = `window.openSettings()`;
+                }
+                if (e.type === "edex-shortcuts") {
+                    cmd = `window.openShortcutsHelp()`;
                 }
 
                 let icon = "";
@@ -379,6 +413,7 @@ class FilesystemDisplay {
                         type = "eDEX-UI keyboard layout";
                         break;
                     case "edex-settings":
+                    case "edex-shortcuts":
                         icon = this.edexIcons.settings;
                         type = "eDEX-UI config file";
                         break;
@@ -412,19 +447,26 @@ class FilesystemDisplay {
                 }
 
                 if (type === "") type = e.type;
+                e.type = type;
+
+                // Handle displayable media
+                if (e.type === 'video' || e.type === 'audio' || e.type === 'image') {
+                    this.cwd[blockIndex].type = e.type;
+                    cmd = `window.fsDisp.openMedia(${blockIndex})`;
+                }
 
                 if (typeof e.size === "number") {
                     e.size = this._formatBytes(e.size);
                 } else {
                     e.size = "--";
                 }
-                if (typeof e.lastAccessed === "object") {
-                    e.lastAccessed = e.lastAccessed.toLocaleString();
+                if (typeof e.lastAccessed === "number") {
+                    e.lastAccessed = new Date(e.lastAccessed).toLocaleString();
                 } else {
                     e.lastAccessed = "--";
                 }
 
-                filesDOM += `<div class="fs_disp_${e.type}${hidden} animationWait" onclick="${cmd}">
+                filesDOM += `<div class="fs_disp_${e.type}${hidden} animationWait" onclick='${cmdPrefix+cmd+cmdSuffix}'>
                                 <svg viewBox="0 0 ${icon.width} ${icon.height}" fill="${this.iconcolor}">
                                     ${icon.svg}
                                 </svg>
@@ -503,6 +545,195 @@ class FilesystemDisplay {
         if (window.performance.navigation.type === 0) {
             this.readFS(window.term[window.currentTerm].cwd || window.settings.cwd);
         }
+
+        this.openFile = (name, path, type) => { //Might add text formatting at some point, not now though - Surge
+            let block;
+
+            if (typeof name === "number") {
+                block = this.cwd[name];
+                name = block.name;
+            }
+
+            let mime = require("mime-types");
+
+            block.path = block.path.replace(/\\/g, "/");
+
+            let filetype = mime.lookup(name.split(".")[name.split(".").length - 1]);
+            switch (filetype) {
+                case "application/pdf":
+                    let html = `<div>
+                        <div class="pdf_options">
+                            <button class="zoom_in">
+                                <svg viewBox="0 0 ${this.icons["zoom-in"].width} ${this.icons["zoom-in"].height}" fill="${this.iconcolor}">
+                                    ${this.icons["zoom-in"].svg}
+                                </svg>
+                            </button>
+                            <button class="zoom_out">
+                                <svg viewBox="0 0 ${this.icons["zoom-out"].width} ${this.icons["zoom-out"].height}" fill="${this.iconcolor}">
+                                    ${this.icons["zoom-out"].svg}
+                                </svg>
+                            </button>
+                            <button class="previous_page">
+                                <svg viewBox="0 0 ${this.icons["backwards"].width} ${this.icons["backwards"].height}" fill="${this.iconcolor}">
+                                    ${this.icons["backwards"].svg}
+                                </svg>
+                            </button>
+                            <span>Page: <span class="page_num"/></span><span>/</span> <span class="page_count"></span></span>
+                            <button class="next_page">
+                                <svg viewBox="0 0 ${this.icons["forwards"].width} ${this.icons["forwards"].height}" fill="${this.iconcolor}">
+                                    ${this.icons["forwards"].svg}
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="pdf_container fsDisp_mediaDisp">
+                            <canvas class="pdf_canvas" />
+                        </div>
+                    </div>`;
+                    const newModal = new Modal(
+                        {
+                            type: "custom",
+                            title: _escapeHtml(name),
+                            html: html
+                        }
+                    );
+                    new DocReader(
+                        {
+                            modalId: newModal.id,
+                            path: block.path
+                        }
+                    );
+                    break;
+                default:
+                    if (mime.charset(filetype) === "UTF-8") {
+                        fs.readFile(block.path, 'utf-8', (err, data) => {
+                            if (err) {
+                                new Modal({
+                                    type: "info",
+                                    title: "Failed to load file: " + block.path,
+                                    html: err
+                                });
+                                console.log(err);
+                            };
+                            window.keyboard.detach();
+                            new Modal(
+                                {
+                                    type: "custom",
+                                    title: _escapeHtml(name),
+                                    html: `<textarea id="fileEdit" rows="40" cols="150" spellcheck="false">${data}</textarea><p id="fedit-status"></p>`,
+                                    buttons: [
+                                        {label:"Save to Disk",action:`window.writeFile('${block.path}')`}
+                                    ]
+                                }, () => {
+                                    window.keyboard.attach();
+                                    window.term[window.currentTerm].term.focus();
+                                }
+                            );
+                        });
+                   break;
+                }
+            }
+        };
+
+        this.openMedia = (name, path, type) => {
+            let block, html;
+
+            if (typeof name === "number") {
+                block = this.cwd[name];
+                name = block.name;
+            }
+
+            block.path = block.path.replace(/\\/g, "/");
+
+            switch (type || block.type) {
+                case "image":
+                    html = `<img class="fsDisp_mediaDisp" src="${window._encodePathURI(path || block.path)}" ondragstart="return false;">`;
+                    break;
+                case "audio":
+                    html = `<div>
+                                <div class="media_container" data-fullscreen="false">
+                                    <audio class="media fsDisp_mediaDisp" preload="auto">
+                                        <source src="${window._encodePathURI(path || block.path)}">
+                                        Unsupported audio format!
+                                    </audio>
+                                    <div class="media_controls" data-state="hidden">
+                                        <div class="playpause media_button" data-state="play">
+                                            <svg viewBox="0 0 ${this.icons["play"].width} ${this.icons["play"].height}" fill="${this.iconcolor}">
+                                                ${this.icons["play"].svg}
+                                            </svg>
+                                        </div>
+                                        <div class="progress_container">
+                                            <div class="progress">
+                                                <span class="progress_bar"></span>
+                                            </div>
+                                        </div>
+                                        <div class="media_time">00:00:00</div>
+                                        <div class="volume_icon">
+                                            <svg viewBox="0 0 ${this.icons["volume"].width} ${this.icons["volume"].height}" fill="${this.iconcolor}">
+                                                ${this.icons["volume"].svg}
+                                            </svg>
+                                        </div>
+                                        <div class="volume">
+                                            <div class="volume_bkg"></div>
+                                            <div class="volume_bar"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>`;
+                    break;
+                case "video":
+                    html = `<div>
+                                <div class="media_container" data-fullscreen="false">
+                                    <video class="media fsDisp_mediaDisp" preload="auto">
+                                        <source src="${window._encodePathURI(path || block.path)}">
+                                        Unsupported video format!
+                                    </video>
+                                    <div class="media_controls" data-state="hidden">
+                                        <div class="playpause media_button" data-state="play">
+                                            <svg viewBox="0 0 ${this.icons["play"].width} ${this.icons["play"].height}" fill="${this.iconcolor}">
+                                                ${this.icons["play"].svg}
+                                            </svg>
+                                        </div>
+                                        <div class="progress_container">
+                                            <div class="progress">
+                                                <span class="progress_bar"></span>
+                                            </div>
+                                        </div>
+                                        <div class="media_time">00:00:00</div>
+                                        <div class="volume_icon">
+                                            <svg viewBox="0 0 ${this.icons["volume"].width} ${this.icons["volume"].height}" fill="${this.iconcolor}">
+                                                ${this.icons["volume"].svg}
+                                            </svg>
+                                        </div>
+                                        <div class="volume">
+                                            <div class="volume_bkg"></div>
+                                            <div class="volume_bar"></div>
+                                        </div>
+                                        <div class="fs media_button" data-state="go-fullscreen">
+                                            <svg viewBox="0 0 ${this.icons["fullscreen"].width} ${this.icons["fullscreen"].height}" fill="${this.iconcolor}">
+                                                ${this.icons["fullscreen"].svg}
+                                            </svg>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>`;
+                    break;
+                default:
+                    throw new Error("fsDisp media displayer: unknown type " + (type || block.type));
+            }
+
+            const newModal = new Modal({
+                type: "custom",
+                title: _escapeHtml(name),
+                html
+            });
+            if (block.type === "audio" || block.type === "video") {
+                new MediaPlayer({
+                    modalId: newModal.id,
+                    path: block.path,
+                    type: block.type
+                });
+            }
+        };
     }
 }
 

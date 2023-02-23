@@ -4,16 +4,15 @@ class Terminal {
             if (!opts.parentId) throw "Missing options";
 
             this.xTerm = require("xterm").Terminal;
+            const {AttachAddon} = require("xterm-addon-attach");
+            const {FitAddon} = require("xterm-addon-fit");
+            const {LigaturesAddon} = require("xterm-addon-ligatures");
+            const {WebglAddon} = require("xterm-addon-webgl");
             this.Ipc = require("electron").ipcRenderer;
 
             this.port = opts.port || 3000;
             this.cwd = "";
             this.oncwdchange = () => {};
-
-            let attachAddon = require("./node_modules/xterm/lib/addons/attach/attach.js");
-            let fitAddon = require("./node_modules/xterm/lib/addons/fit/fit.js");
-            this.xTerm.applyAddon(attachAddon);
-            this.xTerm.applyAddon(fitAddon);
 
             this._sendSizeToServer = () => {
                 let cols = this.term.cols.toString();
@@ -28,10 +27,10 @@ class Terminal {
             };
 
             // Support for custom color filters on the terminal - see #483
-            let doCustomFilter = false;
+            let doCustomFilter = (window.isTermFilterValidated) ? true : false;
 
-            // Typechecking condition to ensure that provided filters are valid and prevent code injection
-            if (typeof window.theme.terminal.colorFilter === "object" && window.theme.terminal.colorFilter.length > 0) {
+            // Parse & validate color filter
+            if (window.isTermFilterValidated !== true && typeof window.theme.terminal.colorFilter === "object" && window.theme.terminal.colorFilter.length > 0) {
                 doCustomFilter = window.theme.terminal.colorFilter.every((step, i, a) => {
                     let func = step.slice(0, step.indexOf("("));
 
@@ -65,6 +64,7 @@ class Terminal {
                             func,
                             arg: [Number(arg)]
                         };
+                        window.isTermFilterValidated = true;
                         return true;
                     }
 
@@ -135,11 +135,18 @@ class Terminal {
                     brightWhite: window.theme.colors.brightWhite || colorify("#eeeeec", themeColor)
                 }
             });
+            let fitAddon = new FitAddon();
+            this.term.loadAddon(fitAddon);
             this.term.open(document.getElementById(opts.parentId));
+            this.term.loadAddon(new WebglAddon());
+            let ligaturesAddon = new LigaturesAddon();
+            this.term.loadAddon(ligaturesAddon);
             this.term.attachCustomKeyEventHandler(e => {
                 window.keyboard.keydownHandler(e);
                 return true;
             });
+            // Prevent soft-keyboard on touch devices #733
+            document.querySelectorAll('.xterm-helper-textarea').forEach(textarea => textarea.setAttribute('readonly', 'readonly'))
             this.term.focus();
 
             this.Ipc.send("terminal_channel-"+this.port, "Renderer startup");
@@ -171,7 +178,8 @@ class Terminal {
 
             this.socket = new WebSocket("ws://"+sockHost+":"+sockPort);
             this.socket.onopen = () => {
-                this.term.attach(this.socket);
+                let attachAddon = new AttachAddon(this.socket);
+                this.term.loadAddon(attachAddon);
                 this.fit();
             };
             this.socket.onerror = e => {throw JSON.stringify(e)};
@@ -186,7 +194,8 @@ class Terminal {
                 let d = Date.now();
 
                 if (d - this.lastSoundFX > 30) {
-                    window.audioManager.stdout.play();
+                    if(window.passwordMode == "false")
+                        window.audioManager.stdout.play();
                     this.lastSoundFX = d;
                 }
                 if (d - this.lastRefit > 10000) {
@@ -230,15 +239,13 @@ class Terminal {
             document.querySelector(".xterm-helper-textarea").addEventListener("keydown", e => {
                 if (e.key === "F11" && window.settings.allowWindowed) {
                     e.preventDefault();
-                    let win = require("electron").remote.BrowserWindow.getFocusedWindow();
-                    let bool = (win.isFullScreen() ? false : true);
-                    win.setFullScreen(bool);
+                    window.toggleFullScreen();
                 }
             });
 
             this.fit = () => {
                 this.lastRefit = Date.now();
-                let {cols, rows} = this.term.proposeGeometry();
+                let {cols, rows} = fitAddon.proposeDimensions();
 
                 // Apply custom fixes based on screen ratio, see #302
                 let w = screen.width;
@@ -252,8 +259,10 @@ class Terminal {
                 let d = gcd(w, h);
 
                 if (d === 100) { y = 1; x = 3;}
-                if (d === 120) y = 1;
+                // if (d === 120) y = 1;
                 if (d === 256) x = 2;
+
+                if (window.settings.termFontSize < 15) y = y - 1;
 
                 cols = cols+x;
                 rows = rows+y;
@@ -284,7 +293,7 @@ class Terminal {
                     this.clipboard.didCopy = true;
                 },
                 paste: () => {
-                    this.write(electron.remote.clipboard.readText());
+                    this.write(remote.clipboard.readText());
                     this.clipboard.didCopy = false;
                 },
                 didCopy: false
@@ -398,14 +407,14 @@ class Terminal {
             }, 1000);
 
             this.tty = this.Pty.spawn(opts.shell || "bash", (opts.params.length > 0 ? opts.params : (process.platform === "win32" ? [] : ["--login"])), {
-                name: "xterm-256color",
+                name: opts.env.TERM || "xterm-256color",
                 cols: 80,
                 rows: 24,
                 cwd: opts.cwd || process.env.PWD,
                 env: opts.env || process.env
             });
 
-            this.tty.on("exit", (code, signal) => {
+            this.tty.onExit((code, signal) => {
                 this._closed = true;
                 this.onclosed(code, signal);
             });
@@ -435,7 +444,11 @@ class Terminal {
                     case "Resize":
                         let cols = args[1];
                         let rows = args[2];
-                        this.tty.resize(Number(cols), Number(rows));
+                        try {
+                            this.tty.resize(Number(cols), Number(rows));
+                        } catch (error) {
+                            //Keep going, it'll work anyways.
+                        }
                         this.onresized(cols, rows);
                         break;
                     default:
@@ -450,7 +463,7 @@ class Terminal {
                 ws.on("message", msg => {
                     this.tty.write(msg);
                 });
-                this.tty.on("data", data => {
+                this.tty.onData(data => {
                     this._nextTickUpdateTtyCWD = true;
                     this._nextTickUpdateProcess = true;
                     try {

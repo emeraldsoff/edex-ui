@@ -23,6 +23,40 @@ class Keyboard {
 
         this.container.dataset.passwordMode = false;
 
+        // Build arrays for enabling keyboard shortcuts
+        this._shortcuts = {
+            CtrlAltShift: [],
+            CtrlAlt: [],
+            CtrlShift: [],
+            AltShift: [],
+            Ctrl: [],
+            Alt: [],
+            Shift: []
+        };
+        window.shortcuts.forEach(scut => {
+            let cut = Object.assign({}, scut);
+            let mods = cut.trigger.split("+");
+            cut.trigger = mods.pop();
+
+            let order = ["Ctrl", "Alt", "Shift"];
+            mods.sort((a, b) => {
+                return order.indexOf(a) - order.indexOf(b);
+            });
+
+            let cat = mods.join("");
+            
+            if (cut.type === "app" && cut.action === "TAB_X" && cut.trigger === "X") {
+                for (let i = 1; i <= 5; i++) {
+                    let ncut = Object.assign({}, cut);
+                    ncut.trigger = `${i}`;
+                    ncut.action = `TAB_${i}`;
+                    this._shortcuts[cat].push(ncut);
+                }
+            } else {
+                this._shortcuts[cat].push(cut);
+            }
+        });
+
         // Parse keymap and create DOM
         Object.keys(layout).forEach(row => {
             this.container.innerHTML += `<div class="keyboard_row" id="`+row+`"></div>`;
@@ -105,8 +139,8 @@ class Keyboard {
 
                         // Keep focus on the terminal
                         if (window.keyboard.linkedToTerm) window.term[window.currentTerm].term.focus();
-
-                        window.audioManager.granted.play();
+                        if (this.container.dataset.passwordMode == "false")
+                            window.audioManager.granted.play();
                         e.preventDefault();
                     };
                     key.onmouseup = () => {
@@ -146,8 +180,8 @@ class Keyboard {
 
                         // Keep focus on the terminal
                         if (window.keyboard.linkedToTerm) window.term[window.currentTerm].term.focus();
-
-                        window.audioManager.stdin.play();
+                        if(this.container.dataset.passwordMode == "false")
+                            window.audioManager.stdin.play();
                         e.preventDefault();
                     };
                     key.onmouseup = e => {
@@ -186,7 +220,8 @@ class Keyboard {
         this.container.addEventListener("touchstart", e => {
             e.preventDefault();
             for (let i = 0; i < e.changedTouches.length; i++) {
-                let key = e.changedTouches[i].target.offsetParent;
+                let key = e.changedTouches[i].target.parentElement;
+                if (key.tagName === 'svg') key = key.parentElement;
                 if (key.getAttribute("class").startsWith("keyboard_key")) {
                     key.setAttribute("class", key.getAttribute("class")+" active");
                     key.onmousedown({preventDefault: () => {return true}});
@@ -202,7 +237,8 @@ class Keyboard {
         let dropKeyTouchHandler = e => {
             e.preventDefault();
             for (let i = 0; i < e.changedTouches.length; i++) {
-                let key = e.changedTouches[i].target.offsetParent;
+                let key = e.changedTouches[i].target.parentElement;
+                if (key.tagName === 'svg') key = key.parentElement;
                 if (key.getAttribute("class").startsWith("keyboard_key")) {
                     key.setAttribute("class", key.getAttribute("class").replace("active", ""));
                     key.onmouseup({preventDefault: () => {return true}});
@@ -258,6 +294,7 @@ class Keyboard {
             }
 
             // See #440
+            if (e.code === "ControlLeft" || e.code === "ControlRight") this.container.dataset.isCtrlOn = true;
             if (e.code === "ShiftLeft" || e.code === "ShiftRight") this.container.dataset.isShiftOn = true;
             if (e.code === "AltLeft" || e.code === "AltRight") this.container.dataset.isAltOn = true;
             if (e.code === "CapsLock" && this.container.dataset.isCapsLckOn !== "true") this.container.dataset.isCapsLckOn = true;
@@ -272,7 +309,12 @@ class Keyboard {
             } else {
                 key.setAttribute("class", "keyboard_key active");
             }
-            window.audioManager.stdin.play();
+
+            // See #516
+            if (e.repeat === false || (e.repeat === true && !e.code.startsWith('Shift') && !e.code.startsWith('Alt') && !e.code.startsWith('Control') && !e.code.startsWith('Caps'))) {
+                if(this.container.dataset.passwordMode == "false")
+                    window.audioManager.stdin.play();
+            }
         };
 
         document.onkeydown = this.keydownHandler;
@@ -282,6 +324,7 @@ class Keyboard {
             if (e.key === "Control" && e.getModifierState("AltGraph")) return;
 
             // See #440
+            if (e.code === "ControlLeft" || e.code === "ControlRight") this.container.dataset.isCtrlOn = false;
             if (e.code === "ShiftLeft" || e.code === "ShiftRight") this.container.dataset.isShiftOn = false;
             if (e.code === "AltLeft" || e.code === "AltRight") this.container.dataset.isAltOn = false;
 
@@ -303,101 +346,59 @@ class Keyboard {
                 }, 100);
             }
 
-            if (e.key === "Enter") {
+            if(this.container.dataset.passwordMode == "false" && e.key === "Enter")
                 window.audioManager.granted.play();
-            }
         };
 
         window.addEventListener("blur", () => {
-        		document.querySelectorAll("div.keyboard_key.active").forEach(key => {
-        				key.setAttribute("class", key.getAttribute("class").replace("active", ""));
-        				key.onmouseup({preventDefault: () => {return true}});
-        		});
+            document.querySelectorAll("div.keyboard_key.active").forEach(key => {
+                key.setAttribute("class", key.getAttribute("class").replace("active", ""));
+                key.onmouseup({preventDefault: () => {return true}});
+            });
         });
     }
     pressKey(key) {
         let cmd = key.dataset.cmd || "";
 
         // Keyboard shortcuts
-        if (this.container.dataset.isCtrlOn === "true" && this.container.dataset.isShiftOn === "true") {
-            console.log(key.dataset);
-            switch(cmd) {
-                case "c":
-                    window.term[window.currentTerm].clipboard.copy();
-                    return true;
-                case "v":
-                    window.term[window.currentTerm].clipboard.paste();
-                    return true;
-                case "s":
-                    if (!document.getElementById("settingsEditor")) {
-                        window.openSettings();
-                    }
-                    return true;
-                case "k":
-                    if (!document.getElementById("shortcutsHelp")) {
-                        window.openShortcutsHelp();
-                    }
-                    return true;
-                case "i":
-                    electron.remote.getCurrentWindow().webContents.toggleDevTools();
-                    return true;
-                case "h":
-                    window.fsDisp.toggleHidedotfiles();
-                    return true;
-                case "p":
-                    window.keyboard.togglePasswordMode();
-                    return true;
-                case "\t":
-                    let i = window.currentTerm ? window.currentTerm : 4;
-                    if (window.term[i] && i !== window.currentTerm) {
-                        window.focusShellTab(i);
-                    } else if (window.term[i-1]) {
-                        window.focusShellTab(i-1);
-                    } else if (window.term[i-2]) {
-                        window.focusShellTab(i-2);
-                    } else if (window.term[i-3]) {
-                        window.focusShellTab(i-3);
-                    } else if (window.term[i-4]) {
-                        window.focusShellTab(i-4);
-                    }
-                    return true;
-            }
-        }
-        if (this.container.dataset.isCtrlOn === "true") {
-            switch(cmd) {
-                case "1":
-                    window.focusShellTab(0);
-                    return true;
-                case "2":
-                    window.focusShellTab(1);
-                    return true;
-                case "3":
-                    window.focusShellTab(2);
-                    return true;
-                case "4":
-                    window.focusShellTab(3);
-                    return true;
-                case "5":
-                    window.focusShellTab(4);
-                    return true;
-                case "\t":
-                    if (window.term[window.currentTerm+1]) {
-                        window.focusShellTab(window.currentTerm+1);
-                    } else if (window.term[window.currentTerm+2]) {
-                        window.focusShellTab(window.currentTerm+2);
-                    } else if (window.term[window.currentTerm+3]) {
-                        window.focusShellTab(window.currentTerm+3);
-                    } else if (window.term[window.currentTerm+4]) {
-                        window.focusShellTab(window.currentTerm+4);
-                    } else {
-                        window.focusShellTab(0);
-                    }
-                    return true;
-            }
+        let shortcutsCat = "";
+        if (this.container.dataset.isCtrlOn === "true") shortcutsCat += "Ctrl";
+        if (this.container.dataset.isAltOn === "true") shortcutsCat += "Alt";
+        if (this.container.dataset.isShiftOn === "true") shortcutsCat += "Shift";
+
+        let shortcutsTriggered = false;
+
+        if (shortcutsCat.length > 1) {
+            this._shortcuts[shortcutsCat].forEach(cut => {
+                if (!cut.enabled) return;
+        
+                let trig = cut.trigger.toLowerCase()
+                                    .replace("plus", "+")
+                                    .replace("space", " ")
+                                    .replace("tab", "\t")
+                                    .replace(/backspace|delete/, "\b")
+                                    .replace(/esc|escape/, this.ctrlseq[1])
+                                    .replace(/return|enter/, "\r");
+
+                if (cmd !== trig) return;
+
+                if (cut.type === "app") {
+                    window.useAppShortcut(cut.action);
+                    shortcutsTriggered = true;
+                } else if (cut.type === "shell") {
+                    let fn = (cut.linebreak) ? writelr : write;
+                    window.term[window.currentTerm][fn](cut.action);
+                } else {
+                    console.warn(`${cut.trigger} has unknown type`);
+                }
+            });
         }
 
+        if (shortcutsTriggered) return;
+
         // Modifiers
-        if (this.container.dataset.isShiftOn === "true" && key.dataset.shift_cmd || this.container.dataset.isCapsLckOn === "true" && key.dataset.shift_cmd) cmd = key.dataset.capslck_cmd || key.dataset.shift_cmd;
+        if (this.container.dataset.isShiftOn === "true" && key.dataset.shift_cmd || this.container.dataset.isCapsLckOn === "true" && key.dataset.shift_cmd) cmd = key.dataset.shift_cmd;
+        if (this.container.dataset.isCapsLckOn === "true" && key.dataset.capslck_cmd) cmd = key.dataset.capslck_cmd;
         if (this.container.dataset.isCtrlOn === "true" && key.dataset.ctrl_cmd) cmd = key.dataset.ctrl_cmd;
         if (this.container.dataset.isAltOn === "true" && key.dataset.alt_cmd) cmd = key.dataset.alt_cmd;
         if (this.container.dataset.isAltOn === "true" && this.container.dataset.isShiftOn === "true" && key.dataset.altshift_cmd) cmd = key.dataset.altshift_cmd;
@@ -518,7 +519,7 @@ class Keyboard {
             if (window.keyboard.linkedToTerm) {
                 window.term[window.currentTerm].writelr("");
             } else {
-                // Do nothing, return not accepted in inputs
+                document.activeElement.dispatchEvent(new CustomEvent("change", {detail: "enter" }));
             }
             return true;
         }
@@ -527,10 +528,12 @@ class Keyboard {
         if (window.keyboard.linkedToTerm) {
             window.term[window.currentTerm].write(cmd);
         } else {
+            let isDelete = false;
             if (typeof document.activeElement.value !== "undefined") {
                 switch(cmd) {
                     case "":
                         document.activeElement.value = document.activeElement.value.slice(0, -1);
+                        isDelete = true;
                         break;
                     case "OD":
                         document.activeElement.selectionStart--;
@@ -548,6 +551,8 @@ class Keyboard {
                         }
                 }
             }
+            // Emulate oninput events
+            document.activeElement.dispatchEvent(new CustomEvent("input", {detail: ((isDelete)? "delete" : "insert") }));
             document.activeElement.focus();
         }
     }
@@ -555,6 +560,7 @@ class Keyboard {
         let d = this.container.dataset.passwordMode;
         (d === "true") ? d = "false" : d = "true";
         this.container.dataset.passwordMode = d;
+        window.passwordMode = d;
         return d;
     }
     addCircum(char) {

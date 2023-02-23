@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const stdout = process.stdout;
-const UglifyJS = require("uglify-es");
+const UglifyJS = require("terser");
 const CleanCSS = require("clean-css");
 JSON.minify = require("node-json-minify");
 
@@ -32,11 +32,11 @@ async function recursiveMinify(dirPath) {
                 if (filePath.endsWith(".json") && !filePath.endsWith("icons.json")) return;
                 // See #446
                 if (filePath.endsWith("file-icons-match.js")) return;
-                await stdout.write(filePath);
+                await stdout.write(filePath.slice(filePath.indexOf('prebuild-src/')+13)+'...');
 
                 switch (filePath.split(".").pop()) {
                     case "js":
-                        let minified = UglifyJS.minify(fs.readFileSync(filePath, {encoding: "utf-8"}), {
+                        let minified = await UglifyJS.minify(fs.readFileSync(filePath, {encoding: "utf-8"}), {
                             compress: {
                                 dead_code: false,
                                 unused: false,

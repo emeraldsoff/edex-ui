@@ -1,7 +1,7 @@
 {
   "name": "edex-ui",
   "productName": "eDEX-UI",
-  "version": "2.2.2",
+  "version": "2.2.8",
   "description": "eDEX-UI sci-fi interface",
   "keywords": [
     "desktop",
@@ -16,29 +16,39 @@
     "type": "git",
     "url": "git+https://github.com/GitSquared/edex-ui.git"
   },
-  "author": "GitSquared <squared@codebrew.fr>",
+  "author": "Gabriel 'Squared' SAILLARD <gabriel@saillard.dev> (https://gaby.dev)",
   "license": "GPL-3.0",
   "bugs": {
     "url": "https://github.com/GitSquared/edex-ui/issues"
   },
   "homepage": "https://github.com/GitSquared/edex-ui#readme",
   "dependencies": {
-    "@wcjiang/whereis": "^1.0.0",
-    "color": "3.1.2",
-    "howler": "2.1.2",
-    "nanoid": "2.0.3",
-    "node-pty": "0.8.1",
-    "pretty-bytes": "5.2.0",
-    "shell-env": "3.0.0",
+    "@electron/remote": "^1.2.2",
+    "augmented-ui": "^1.1.2",
+    "color": "3.2.1",
+    "geolite2-redist": "^2.0.4",
+    "howler": "2.2.3",
+    "maxmind": "4.3.2",
+    "mime-types": "^2.1.33",
+    "nanoid": "3.1.30",
+    "node-pty": "0.10.1",
+    "pdfjs-dist": "2.11.338",
+    "pretty-bytes": "5.6.0",
+    "shell-env": "3.0.1",
     "signale": "1.4.0",
     "smoothie": "1.35.0",
-    "systeminformation": "4.11.4",
-    "tail": "2.0.2",
+    "systeminformation": "5.9.7",
+    "tail": "2.2.4",
     "username": "5.1.0",
-    "ws": "7.0.1",
-    "xterm": "3.14.2"
+    "which": "2.0.2",
+    "ws": "7.5.5",
+    "xterm": "4.14.1",
+    "xterm-addon-attach": "0.6.0",
+    "xterm-addon-fit": "0.5.0",
+    "xterm-addon-ligatures": "0.5.1",
+    "xterm-addon-webgl": "^0.11.2"
   },
   "optionalDependencies": {
-    "osx-temperature-sensor": "1.0.3"
+    "osx-temperature-sensor": "1.0.7"
   }
 }
